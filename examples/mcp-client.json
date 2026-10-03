@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "youtube_transcript": {
+      "command": "C:\\path\\to\\youtube-transcript-mcp\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "youtube_transcript_mcp", "serve"],
+      "env": {"PYTHONUTF8": "1"}
+    }
+  }
+}

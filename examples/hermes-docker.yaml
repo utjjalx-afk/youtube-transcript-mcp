@@ -1,0 +1,14 @@
+mcp_servers:
+  youtube_transcript:
+    command: docker
+    args:
+      - run
+      - --rm
+      - -i
+      - -v
+      - youtube-transcript-models:/home/app/.cache
+      - youtube-transcript-mcp
+      - serve
+    timeout: 1800
+    connect_timeout: 60
+    supports_parallel_tool_calls: false

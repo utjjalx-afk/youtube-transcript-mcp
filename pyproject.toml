@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "youtube-transcript-mcp"
+version = "0.1.0"
+description = "Hermes-compatible MCP server with caption-first YouTube transcripts and Whisper fallback."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+  "mcp>=1.26,<2",
+  "pydantic>=2.11,<3",
+  "requests>=2.32.3,<3",
+  "youtube-transcript-api>=1.2.2,<2",
+  "yt-dlp>=2026.3.17",
+]
+
+[project.optional-dependencies]
+whisper = ["faster-whisper>=1.2.1,<2"]
+dev = ["pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.11,<1", "build>=1.2,<2"]
+
+[project.scripts]
+youtube-transcript-mcp = "youtube_transcript_mcp.cli:main"
+
+[project.urls]
+Repository = "https://github.com/utjjalx-afk/youtube-transcript-mcp"
+Issues = "https://github.com/utjjalx-afk/youtube-transcript-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/youtube_transcript_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
