@@ -48,3 +48,42 @@ def test_cli_safe_error(monkeypatch, capsys):
     assert caught.value.code == 1
     assert captured.out == ""
     assert "Error: Captions unavailable" in captured.err
+
+
+def test_cli_whisper_language_forwarded(monkeypatch, capsys, transcript):
+    from unittest.mock import Mock
+
+    fetch = Mock(return_value=transcript)
+    monkeypatch.setattr("youtube_transcript_mcp.cli.TranscriptService.get_transcript", fetch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "youtube-transcript-mcp",
+            "fetch",
+            transcript.video_id,
+            "--languages",
+            "en",
+            "--whisper-language",
+            "hi",
+            "--source",
+            "whisper",
+            "--format",
+            "txt",
+        ],
+    )
+    main()
+    fetch.assert_called_once_with(transcript.video_id, ["en"], "whisper", "hi")
+    assert capsys.readouterr().out.strip() == transcript.text
+
+
+def test_cli_debug_does_not_swallow_oserror(monkeypatch):
+    monkeypatch.setenv("YTMCP_DEBUG", "true")
+
+    def fail(*args):
+        raise OSError("decode failure")
+
+    monkeypatch.setattr("youtube_transcript_mcp.cli.TranscriptService.get_transcript", fail)
+    monkeypatch.setattr(sys, "argv", ["youtube-transcript-mcp", "fetch", "dQw4w9WgXcQ"])
+    with pytest.raises(OSError, match="decode failure"):
+        main()

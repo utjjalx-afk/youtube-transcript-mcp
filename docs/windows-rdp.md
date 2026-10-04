@@ -13,11 +13,14 @@ firewall port or expose this server on the internet.
 ```powershell
 git clone https://github.com/utjjalx-afk/youtube-transcript-mcp.git
 cd youtube-transcript-mcp
-py -3.11 -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -e ".[whisper]"
 .\.venv\Scripts\python.exe -m youtube_transcript_mcp doctor
 ```
+
+If `python` is not on PATH, use `py -3.11` or `py -3.12` to create the venv.
+The installed interpreter must be Python 3.11 or newer.
 
 4. Resolve the interpreter path with:
 
@@ -35,7 +38,8 @@ or system PowerShell execution-policy change is required.
 
 ## CPU and storage
 
-No GPU is required. `base` with CPU/int8 is the default. For a low-memory machine,
+No GPU is required. `small` with CPU/int8 is the default. Allow roughly a 500 MB
+model download and around 1 GB RAM (actual usage varies). For a low-memory machine,
 set `YTMCP_WHISPER_MODEL` to `tiny`. Model weights consume disk and require network
 access on first use. Model initialization happens on first transcription, not at
 MCP startup, so the initial connection stays fast. Downloaded audio is temporary.
@@ -45,6 +49,18 @@ Faster-Whisper uses bundled PyAV decoding, without a system FFmpeg requirement
 for this implementation. NVIDIA inference is optional and requires the CUDA/cuDNN
 versions supported by your installed CTranslate2/Faster-Whisper stack; this project
 does not install or manage GPU drivers.
+
+For Hindi speech, set `YTMCP_WHISPER_LANGUAGE=hi` in the server environment or use
+`fetch --source whisper --whisper-language hi`. Caption `--languages` remains
+independent. The `small` model is the recommended starting point for Hindi/Indic;
+`base` can be faster but weaker on non-English speech.
+
+If decoding reports `metadata_errors`, reinstall the updated Whisper extra with
+`.\.venv\Scripts\python.exe -m pip install -e ".[whisper]"`. It constrains PyAV to
+`av>=11,<19`; PyAV 19 is incompatible with Faster-Whisper 1.2.1 decoding. `doctor`
+shows the installed version and whether the constraint is satisfied. For provider
+diagnostics, set `$env:YTMCP_DEBUG = "true"` temporarily; error causes/tracebacks
+remain visible with credential redaction.
 
 ## Network and security
 

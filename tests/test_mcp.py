@@ -11,7 +11,10 @@ from youtube_transcript_mcp.service import TranscriptService
 
 def test_tool_schema_and_mocked_call(monkeypatch, transcript):
     service = TranscriptService()
-    monkeypatch.setattr(service, "get_transcript", lambda *args: transcript)
+    from unittest.mock import Mock
+
+    fetch_transcript = Mock(return_value=transcript)
+    monkeypatch.setattr(service, "get_transcript", fetch_transcript)
     server = create_server(service)
 
     async def run():
@@ -21,8 +24,12 @@ def test_tool_schema_and_mocked_call(monkeypatch, transcript):
         assert fetch.inputSchema["required"] == ["video"]
         assert fetch.annotations.readOnlyHint
         assert fetch.outputSchema
-        result = await server.call_tool("get_transcript", {"video": transcript.video_id})
+        assert "whisper_language" in fetch.inputSchema["properties"]
+        result = await server.call_tool(
+            "get_transcript", {"video": transcript.video_id, "whisper_language": "hi"}
+        )
         assert result[1]["text"] == "Hello world"
+        fetch_transcript.assert_called_once_with(transcript.video_id, None, "auto", "hi")
 
     anyio.run(run)
 

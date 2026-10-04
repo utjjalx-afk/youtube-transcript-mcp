@@ -6,6 +6,6 @@ mcp_servers:
     connect_timeout: 60
     supports_parallel_tool_calls: false
     env:
-      YTMCP_WHISPER_MODEL: base
+      YTMCP_WHISPER_MODEL: small
       YTMCP_WHISPER_DEVICE: cpu
       YTMCP_WHISPER_COMPUTE_TYPE: int8

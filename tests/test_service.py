@@ -149,7 +149,7 @@ def test_whisper_model_reused_and_temporary_files_cleaned(monkeypatch):
     model = Mock()
     model.transcribe.side_effect = lambda *args, **kwargs: (
         iter([SimpleNamespace(text=" Hello ", start=1.0, end=2.5)]),
-        SimpleNamespace(language="en"),
+        SimpleNamespace(language="en", language_probability=0.9),
     )
     constructor = Mock(return_value=model)
     monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=constructor))
@@ -159,13 +159,17 @@ def test_whisper_model_reused_and_temporary_files_cleaned(monkeypatch):
         assert result.source == "whisper"
         assert result.segments[0].duration == 1.5
         assert result.text == "Hello"
-    constructor.assert_called_once_with("base", device="cpu", compute_type="int8")
+    constructor.assert_called_once_with("small", device="cpu", compute_type="int8")
+    assert model.transcribe.call_args.kwargs == {
+        "vad_filter": True,
+        "condition_on_previous_text": False,
+    }
     assert all(not folder.exists() for folder in folders)
 
 
 @pytest.mark.parametrize("failure", [True, False])
 def test_whisper_failure_cleans_audio(monkeypatch, failure):
-    service = TranscriptService(Settings())
+    service = TranscriptService(Settings(proxy="http://user:credential-secret@proxy.test"))
     folders = []
 
     def download(video_id, directory):
@@ -258,8 +262,100 @@ def test_download_byte_limit(monkeypatch, tmp_path):
 def test_download_error_sanitized(monkeypatch, tmp_path):
     fake_downloader(monkeypatch, tmp_path, {}, error=RuntimeError("credential-secret"))
     with pytest.raises(TranscriptError) as caught:
-        TranscriptService(Settings())._download_audio("dQw4w9WgXcQ", tmp_path)
+        TranscriptService(
+            Settings(proxy="http://user:credential-secret@proxy.test")
+        )._download_audio("dQw4w9WgXcQ", tmp_path)
     assert "credential-secret" not in str(caught.value)
+    assert "RuntimeError" in str(caught.value)
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert "credential-secret" not in str(caught.value.__cause__)
+
+
+@pytest.mark.parametrize(
+    "hint,configured,expected",
+    [("hi", "en", "hi"), (None, "hi", "hi"), ("", "hi", None), (None, None, None)],
+)
+@pytest.mark.parametrize("confidence,warning", [(0.2, True), (0.35, False), (0.98, False)])
+def test_whisper_language_and_confidence(
+    monkeypatch, tmp_path, hint, configured, expected, confidence, warning
+):
+    service = TranscriptService(Settings(whisper_language=configured))
+    model = Mock()
+    model.transcribe.return_value = (
+        iter([SimpleNamespace(text="नमस्ते", start=0, end=1)]),
+        SimpleNamespace(language="hi", language_probability=confidence),
+    )
+    monkeypatch.setitem(
+        sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=Mock(return_value=model))
+    )
+    monkeypatch.setattr(service, "_download_audio", lambda *args: tmp_path / "audio.m4a")
+    result = service.get_transcript("dQw4w9WgXcQ", source="whisper", whisper_language=hint)
+    assert result.text == "नमस्ते"
+    assert model.transcribe.call_args.kwargs["condition_on_previous_text"] is False
+    if expected is None:
+        assert "language" not in model.transcribe.call_args.kwargs
+    else:
+        assert model.transcribe.call_args.kwargs["language"] == expected
+    assert bool(result.warnings) is warning
+    assert service.settings.whisper_language == configured
+
+
+@pytest.mark.parametrize("debug", [False, True])
+def test_whisper_exception_type_message_and_traceback(monkeypatch, tmp_path, debug):
+    import traceback
+
+    service = TranscriptService(Settings(debug=debug))
+    failure = TypeError("open() got an unexpected keyword argument 'metadata_errors'")
+    model = Mock()
+    model.transcribe.side_effect = failure
+    monkeypatch.setitem(
+        sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=Mock(return_value=model))
+    )
+    monkeypatch.setattr(service, "_download_audio", lambda *args: tmp_path / "audio.m4a")
+    with pytest.raises(TypeError if debug else TranscriptError) as caught:
+        service.get_transcript("dQw4w9WgXcQ", source="whisper")
+    assert "metadata_errors" in str(caught.value)
+    if debug:
+        assert caught.value is failure
+        assert "transcribe" in "".join(traceback.format_exception(caught.value))
+    else:
+        assert "TypeError" in str(caught.value)
+        assert caught.value.__cause__ is failure
+
+
+def test_debug_download_preserves_raw_error_without_credentials(monkeypatch, tmp_path):
+    import traceback
+
+    proxy = "http://proxy-user:proxy-password@proxy.test:8080"
+    settings = Settings(debug=True, proxy=proxy, cookies_file="private-cookies.txt")
+    failure = RuntimeError(f"Download failed via {proxy}; private-cookies.txt")
+    failure.__cause__ = ValueError("proxy-password")
+    failure.add_note("private-cookies.txt")
+    fake_downloader(monkeypatch, tmp_path, {}, error=failure)
+    with pytest.raises(RuntimeError) as caught:
+        TranscriptService(settings)._download_audio("dQw4w9WgXcQ", tmp_path)
+    diagnostic = "".join(traceback.format_exception(caught.value))
+    assert caught.value is failure
+    assert "Download failed" in diagnostic
+    for secret in (proxy, "proxy-user", "proxy-password", "private-cookies.txt"):
+        assert secret not in diagnostic
+
+
+@pytest.mark.parametrize("av_version,active", [("18.1.0", True), ("19.0.1", False), (None, False)])
+def test_status_reports_av_constraint(monkeypatch, av_version, active):
+    from importlib.metadata import PackageNotFoundError
+
+    def installed_version(name):
+        if av_version is None:
+            raise PackageNotFoundError(name)
+        return av_version
+
+    monkeypatch.setattr("youtube_transcript_mcp.service.version", installed_version)
+    status = TranscriptService(Settings()).status()
+    assert status["whisper_model"] == "small"
+    assert status["whisper_language"] is None
+    assert status["av_constraint"] == "av>=11,<19"
+    assert status["av_constraint_active"] is active
 
 
 def test_status_no_credentials():

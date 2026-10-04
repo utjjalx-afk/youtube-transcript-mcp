@@ -22,10 +22,12 @@ def main() -> None:
     fetch = subcommands.add_parser("fetch", help="Fetch a transcript without an MCP client")
     fetch.add_argument("video")
     fetch.add_argument("--languages", nargs="+", default=None)
+    fetch.add_argument("--whisper-language", help="Whisper-only language hint, e.g. hi or en")
     fetch.add_argument("--source", choices=["auto", "captions", "whisper"], default="auto")
     fetch.add_argument("--format", choices=["json", "txt", "srt", "vtt"], default="json")
     fetch.add_argument("--output", type=Path)
     arguments = parser.parse_args()
+    service = None
     try:
         service = TranscriptService()
         if arguments.command in {None, "serve"}:
@@ -42,7 +44,9 @@ def main() -> None:
                 json.dumps([track.model_dump() for track in tracks], ensure_ascii=False, indent=2)
             )
             return
-        result = service.get_transcript(arguments.video, arguments.languages, arguments.source)
+        result = service.get_transcript(
+            arguments.video, arguments.languages, arguments.source, arguments.whisper_language
+        )
         if arguments.format == "json":
             output = result.model_dump_json(indent=2)
         elif arguments.format == "txt":
@@ -54,6 +58,8 @@ def main() -> None:
         else:
             print(output)
     except (TranscriptError, OSError) as error:
+        if service is not None and service.settings.debug:
+            raise
         message = (
             str(error) if isinstance(error, TranscriptError) else "Could not write output file."
         )

@@ -27,3 +27,31 @@ def test_invalid_boolean(monkeypatch):
     monkeypatch.setenv("YTMCP_WHISPER_ENABLED", "invalid")
     with pytest.raises(TranscriptError, match="true or false"):
         Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    "value,expected", [(None, None), ("", None), ("  ", None), ("hi", "hi"), (" EN ", "en")]
+)
+def test_whisper_language_env(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("YTMCP_WHISPER_LANGUAGE", raising=False)
+    else:
+        monkeypatch.setenv("YTMCP_WHISPER_LANGUAGE", value)
+    assert Settings.from_env().whisper_language == expected
+
+
+def test_debug_env(monkeypatch):
+    monkeypatch.setenv("YTMCP_DEBUG", "true")
+    assert Settings.from_env().debug
+    monkeypatch.setenv("YTMCP_DEBUG", "false")
+    assert not Settings.from_env().debug
+    monkeypatch.setenv("YTMCP_DEBUG", "invalid")
+    with pytest.raises(TranscriptError, match="YTMCP_DEBUG"):
+        Settings.from_env()
+
+
+def test_invalid_whisper_language(monkeypatch):
+    monkeypatch.setenv("YTMCP_WHISPER_LANGUAGE", "../private-cookie-path")
+    with pytest.raises(TranscriptError) as caught:
+        Settings.from_env()
+    assert "private-cookie-path" not in str(caught.value)

@@ -26,3 +26,15 @@ jobs:
       - run: python -m pytest --cov=youtube_transcript_mcp --cov-report=term-missing
       - run: python -m build
       - run: python -m youtube_transcript_mcp doctor
+
+  whisper-decode:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev,whisper]"
+      - run: python -m pip check
+      - run: python -m pytest tests/test_audio_compat.py
+      - run: python -m youtube_transcript_mcp doctor

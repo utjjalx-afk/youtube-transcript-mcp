@@ -1,6 +1,7 @@
 import importlib.util
 import math
 import threading
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
@@ -11,7 +12,8 @@ from youtube_transcript_api._errors import YouTubeTranscriptApiException
 from youtube_transcript_api.proxies import GenericProxyConfig
 from yt_dlp import YoutubeDL
 
-from youtube_transcript_mcp.config import Settings
+from youtube_transcript_mcp.config import Settings, normalize_whisper_language
+from youtube_transcript_mcp.errors import redact_exception, redact_message
 from youtube_transcript_mcp.models import (
     CaptionTrack,
     Segment,
@@ -103,9 +105,13 @@ class TranscriptService:
         video: str,
         languages: list[str] | None = None,
         source: Literal["auto", "captions", "whisper"] = "auto",
+        whisper_language: str | None = None,
     ) -> TranscriptResult:
         video_id = video_id_from_input(video)
         preferred_languages = normalize_languages(languages)
+        language_hint = normalize_whisper_language(
+            whisper_language if whisper_language is not None else self.settings.whisper_language
+        )
         if source not in {"auto", "captions", "whisper"}:
             raise TranscriptError("source must be auto, captions, or whisper.")
         warnings = []
@@ -119,7 +125,7 @@ class TranscriptService:
                         "the request. Try list_captions or source='auto'."
                     ) from None
                 warnings.append("Preferred captions unavailable; used audio transcription instead.")
-        result = self._whisper(video_id)
+        result = self._whisper(video_id, language_hint)
         result.warnings.extend(warnings)
         return result
 
@@ -175,22 +181,31 @@ class TranscriptService:
                 return audio
         except TranscriptError:
             raise
-        except Exception:
+        except Exception as error:
+            redact_exception(error, self.settings)
+            if self.settings.debug:
+                raise
             raise TranscriptError(
-                "Audio download failed. Check video access, network/IP blocking, "
-                "and yt-dlp updates. "
+                f"Audio download failed: {type(error).__name__}: "
+                f"{redact_message(str(error), self.settings)}. "
+                "Check video access, network/IP blocking, and yt-dlp updates. "
                 "Whisper cannot bypass YouTube access restrictions."
-            ) from None
+            ) from error
 
-    def _whisper(self, video_id: str) -> TranscriptResult:
+    def _whisper(self, video_id: str, language: str | None = None) -> TranscriptResult:
         if not self.settings.whisper_enabled:
             raise TranscriptError("Whisper fallback is disabled by YTMCP_WHISPER_ENABLED.")
         try:
             from faster_whisper import WhisperModel
-        except ImportError:
+        except ImportError as error:
+            redact_exception(error, self.settings)
+            if self.settings.debug:
+                raise
             raise TranscriptError(
+                f"Whisper import failed: {type(error).__name__}: "
+                f"{redact_message(str(error), self.settings)}. "
                 'Install Whisper support with: python -m pip install -e ".[whisper]"'
-            ) from None
+            ) from error
         with self._whisper_lock, TemporaryDirectory(prefix="ytmcp-") as temporary:
             audio = self._download_audio(video_id, Path(temporary))
             try:
@@ -200,7 +215,10 @@ class TranscriptService:
                         device=self.settings.whisper_device,
                         compute_type=self.settings.whisper_compute_type,
                     )
-                raw_segments, info = self._model.transcribe(str(audio), vad_filter=True)
+                options = {"vad_filter": True, "condition_on_previous_text": False}
+                if language is not None:
+                    options["language"] = language
+                raw_segments, info = self._model.transcribe(str(audio), **options)
                 segments = [
                     Segment(
                         text=segment.text.strip(),
@@ -212,6 +230,13 @@ class TranscriptService:
                 ]
                 if not segments:
                     raise TranscriptError("Whisper detected no speech in the video.")
+                warnings = []
+                if info.language_probability < 0.35:
+                    warnings.append(
+                        f"Low language confidence ({info.language_probability:.2f}); "
+                        "the detected language/transcript may be unreliable. "
+                        "Try setting whisper_language to the known spoken language."
+                    )
                 return TranscriptResult(
                     video_id=video_id,
                     url=f"https://www.youtube.com/watch?v={video_id}",
@@ -221,23 +246,39 @@ class TranscriptService:
                     is_generated=True,
                     segments=segments,
                     text="\n".join(segment.text for segment in segments),
+                    warnings=warnings,
                 )
             except TranscriptError:
                 raise
-            except Exception:
+            except Exception as error:
+                redact_exception(error, self.settings)
+                if self.settings.debug:
+                    raise
                 raise TranscriptError(
-                    "Whisper transcription failed. Check model download access, available memory, "
+                    f"Whisper transcription failed: {type(error).__name__}: "
+                    f"{redact_message(str(error), self.settings)}. "
+                    "Check model download access, available memory, "
                     "and device/compute settings. CPU with int8 is the default."
-                ) from None
+                ) from error
 
-    def status(self) -> dict[str, str | bool | int]:
+    def status(self) -> dict[str, str | bool | int | None]:
+        try:
+            av_version = version("av")
+        except PackageNotFoundError:
+            av_version = None
+        av_constraint_active = av_version is not None and 11 <= int(av_version.split(".")[0]) < 19
         return {
             "transport": "stdio",
             "whisper_enabled": self.settings.whisper_enabled,
             "whisper_installed": importlib.util.find_spec("faster_whisper") is not None,
             "whisper_model": self.settings.whisper_model,
+            "whisper_language": self.settings.whisper_language,
             "whisper_device": self.settings.whisper_device,
             "whisper_compute_type": self.settings.whisper_compute_type,
+            "debug": self.settings.debug,
+            "av_constraint": "av>=11,<19",
+            "av_version": av_version,
+            "av_constraint_active": av_constraint_active,
             "max_duration_seconds": self.settings.max_duration_seconds,
             "max_download_mb": self.settings.max_download_mb,
             "proxy_configured": bool(self.settings.proxy),
